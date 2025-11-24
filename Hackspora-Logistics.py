@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import mysql.connector
+import sys
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")
 from datetime import datetime
 import hashlib
 import requests
@@ -12,14 +15,14 @@ DB_USER = "root"
 DB_PASSWORD = "Tvmd@123"
 DB_NAME = "farm_supply_chain"
 
-
 def get_coordinates(location):
     if not location:
         return None, None
     try:
-        url = f"https://nominatim.openstreetmap.org/search?format=json&limit=1&q={location}"
-        response = requests.get(url, headers={"User-Agent": "FarmSupplyApp"})
-        data = response.json()
+        url = "https://nominatim.openstreetmap.org/search"
+        resp = requests.get(url, params={"format": "json", "limit": 1, "q": location}, headers={"User-Agent": "FarmSupplyApp"}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
         if data:
             lat = float(data[0]["lat"])
             lon = float(data[0]["lon"])
@@ -28,18 +31,17 @@ def get_coordinates(location):
     except Exception:
         return None, None
 
-
 def get_location_suggestions(query):
     if not query or len(query.strip()) < 3:
         return []
     try:
-        url = f"https://nominatim.openstreetmap.org/search?format=json&limit=5&q={query}"
-        response = requests.get(url, headers={"User-Agent": "FarmSupplyApp"})
-        data = response.json()
+        url = "https://nominatim.openstreetmap.org/search"
+        resp = requests.get(url, params={"format": "json", "limit": 5, "q": query}, headers={"User-Agent": "FarmSupplyApp"}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
         return [item.get("display_name", "") for item in data]
     except Exception:
         return []
-
 
 def get_currency_symbol_from_location(text):
     if not text:
@@ -79,7 +81,6 @@ def get_currency_symbol_from_location(text):
     if any(w in t for w in europe_words):
         return "€"
     return "₹"
-
 
 def upgrade_schema(conn):
     cursor = conn.cursor()
@@ -128,10 +129,8 @@ def upgrade_schema(conn):
     conn.commit()
     cursor.close()
 
-
 def create_all_tables(conn):
     cursor = conn.cursor()
-
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS farmers (
@@ -149,7 +148,6 @@ def create_all_tables(conn):
         )
         """
     )
-
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS inventory (
@@ -163,7 +161,6 @@ def create_all_tables(conn):
         )
         """
     )
-
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
@@ -179,7 +176,6 @@ def create_all_tables(conn):
         )
         """
     )
-
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS logistics (
@@ -194,7 +190,6 @@ def create_all_tables(conn):
         )
         """
     )
-
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS vehicles (
@@ -208,7 +203,6 @@ def create_all_tables(conn):
         )
         """
     )
-
     cursor.execute("SELECT COUNT(*) FROM vehicles")
     count = cursor.fetchone()[0]
     if count == 0:
@@ -220,11 +214,9 @@ def create_all_tables(conn):
                 ("Drone 1", "Drone", 13.0827, 80.2707),
             ],
         )
-
     upgrade_schema(conn)
     conn.commit()
     cursor.close()
-
 
 def get_db_connection():
     try:
@@ -240,9 +232,18 @@ def get_db_connection():
         create_all_tables(conn)
         return conn
     except mysql.connector.Error as err:
-        messagebox.showerror("Database Error", f"Error connecting to MySQL: {err}")
+        # Log the error to console for easier debugging and also show a messagebox in the UI
+        logging.exception("Error connecting to MySQL")
+        try:
+            # If tkinter is not initialized or running headless, printing to stderr helps capture the issue
+            print(f"Database Error: {err}", file=sys.stderr)
+        except Exception:
+            pass
+        try:
+            messagebox.showerror("Database Error", f"Error connecting to MySQL: {err}")
+        except Exception:
+            pass
         return None
-
 
 class FarmSupplyApp:
     def __init__(self, root):
@@ -336,10 +337,17 @@ class FarmSupplyApp:
             cursor.close()
             return True
         except mysql.connector.Error as err:
-            messagebox.showerror("Database Error", f"Error executing query: {err}")
+            logging.exception("Error executing query")
+            try:
+                print(f"Database query error: {err}\nQuery: {query}\nParams: {params}", file=sys.stderr)
+            except Exception:
+                pass
+            try:
+                messagebox.showerror("Database Error", f"Error executing query: {err}")
+            except Exception:
+                pass
             return None
 
-    # ---------------- Dashboard ----------------
     def create_dashboard_tab(self):
         container = tk.Frame(self.tab_dashboard, bg=self.colors["background"])
         container.pack(expand=True, fill="both")
@@ -486,7 +494,6 @@ class FarmSupplyApp:
         total_units = inv_units[0][0] if inv_units and inv_units[0][0] is not None else 0
         self.total_inventory_units_label.config(text=f"Total Inventory Units\n{total_units}")
 
-    # ---------------- Inventory ----------------
     def create_inventory_tab(self):
         frame = ttk.Frame(self.tab_inventory)
         frame.pack(pady=10, fill="x")
@@ -591,7 +598,6 @@ class FarmSupplyApp:
         self.load_inventory()
         self.update_dashboard()
 
-    # ---------------- Orders ----------------
     def create_orders_tab(self):
         frame = ttk.Frame(self.tab_orders)
         frame.pack(pady=10, fill="x")
@@ -612,7 +618,8 @@ class FarmSupplyApp:
         self.order_dest = ttk.Entry(frame, width=20)
         self.order_dest.grid(row=1, column=3, padx=5, pady=5)
 
-        ttk.Button(frame, text="Place Order", command=self.place_order).grid(row=2, column=0, padx=5, pady=10)
+        self.place_order_btn = ttk.Button(frame, text="Place Order", command=self.place_order)
+        self.place_order_btn.grid(row=2, column=0, padx=5, pady=10)
         ttk.Button(frame, text="Refresh", command=self.load_orders).grid(row=2, column=1, padx=5, pady=10)
 
         status_frame = ttk.Frame(self.tab_orders)
@@ -651,9 +658,25 @@ class FarmSupplyApp:
             )
         if data:
             products = [row[0] for row in data]
-            self.order_product["values"] = products
+            if products:
+                self.order_product["values"] = products
+                try:
+                    self.place_order_btn.state(["!disabled"])
+                except Exception:
+                    pass
+            else:
+                # No products available
+                self.order_product["values"] = ["No products available"]
+                try:
+                    self.place_order_btn.state(["disabled"])
+                except Exception:
+                    pass
         else:
-            self.order_product["values"] = []
+            self.order_product["values"] = ["No products available"]
+            try:
+                self.place_order_btn.state(["disabled"])
+            except Exception:
+                pass
 
     def load_orders(self):
         if not hasattr(self, "orders_tree"):
@@ -765,7 +788,6 @@ class FarmSupplyApp:
         self.execute_query("UPDATE orders SET status=%s WHERE id=%s", (new_status, order_id))
         self.load_orders()
 
-    # ---------------- Logistics ----------------
     def create_logistics_tab(self):
         header = ttk.Label(self.tab_logistics, text="Logistics Planner", font=("Arial", 16))
         header.pack(pady=10)
@@ -896,7 +918,6 @@ class FarmSupplyApp:
         )
         messagebox.showinfo("Success", "Logistics plan saved")
 
-    # ---------------- Farmers ----------------
     def create_farmers_tab(self):
         header = ttk.Label(self.tab_farmers, text="Farmers", font=("Arial", 16))
         header.pack(pady=10)
@@ -944,7 +965,6 @@ class FarmSupplyApp:
         url = f"https://www.google.com/maps?q={lat},{lon}"
         webbrowser.open(url)
 
-    # ---------------- Tracking ----------------
     def create_tracking_tab(self):
         header = ttk.Label(self.tab_tracking, text="Vehicle Tracking", font=("Arial", 16))
         header.pack(pady=10)
@@ -1036,7 +1056,6 @@ class FarmSupplyApp:
         self.load_vehicles()
         messagebox.showinfo("Simulation", "Vehicle positions updated")
 
-
 class FarmerDashboard(FarmSupplyApp):
     def __init__(self, root, login_system, username):
         self.login_system = login_system
@@ -1094,59 +1113,98 @@ class FarmerDashboard(FarmSupplyApp):
         self.root.destroy()
         self.login_system.root.deiconify()
 
-
 class SignupWindow:
     def __init__(self, parent, login_system):
         self.login_system = login_system
         self.win = tk.Toplevel(parent)
         self.win.title("Farmer Registration")
-        self.win.geometry("450x600")
+        self.win.geometry("480x700")
+        try:
+            self.win.resizable(True, True)
+            self.win.minsize(420, 380)
+            self.win.grab_set()
+            self.win.lift()
+            self.win.focus_force()
+            self.win.attributes("-topmost", True)
+            self.win.after(500, lambda: self.win.attributes("-topmost", False))
+        except Exception:
+            pass
 
-        tk.Label(self.win, text="Farmer Registration", font=("Arial", 16, "bold")).pack(pady=10)
+        header = tk.Label(self.win, text="Farmer Registration", font=("Arial", 16, "bold"))
+        header.pack(pady=10)
+
+        outer = tk.Frame(self.win)
+        outer.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(outer)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas)
+
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def _on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        inner.bind("<Configure>", _on_configure)
 
         self.fields = {}
         labels = ["Full Name", "Contact", "Email"]
         for label in labels:
-            tk.Label(self.win, text=label).pack(pady=5)
-            entry = tk.Entry(self.win)
-            entry.pack(pady=5)
+            tk.Label(inner, text=label).pack(pady=5, anchor="w", padx=10)
+            entry = tk.Entry(inner)
+            entry.pack(pady=5, padx=10, fill="x")
             key = label.lower().replace(" ", "_")
             self.fields[key] = entry
 
-        tk.Label(self.win, text="Location").pack(pady=5)
-        loc_frame = tk.Frame(self.win)
-        loc_frame.pack(pady=5)
+        tk.Label(inner, text="Location").pack(pady=5, anchor="w", padx=10)
+        loc_frame = tk.Frame(inner)
+        loc_frame.pack(pady=5, padx=10, fill="x")
         self.location_entry = tk.Entry(loc_frame, width=30)
-        self.location_entry.pack(side="left", padx=5)
+        self.location_entry.pack(side="left", padx=5, fill="x", expand=True)
         tk.Button(loc_frame, text="Search", command=self.search_location_suggestions).pack(side="left")
 
-        self.suggestion_listbox = tk.Listbox(self.win, height=5)
-        self.suggestion_listbox.pack(pady=5, fill="x")
+        self.suggestion_listbox = tk.Listbox(inner, height=5)
+        self.suggestion_listbox.pack(pady=5, fill="x", padx=10)
         self.suggestion_listbox.bind("<<ListboxSelect>>", self.select_location_suggestion)
 
-        tk.Label(self.win, text="Preferred Language").pack(pady=5)
+        tk.Label(inner, text="Preferred Language").pack(pady=5, anchor="w", padx=10)
         self.language_var = tk.StringVar(value="English")
         self.language_combo = ttk.Combobox(
-            self.win,
+            inner,
             textvariable=self.language_var,
             state="readonly",
             values=["English", "Tamil", "Hindi", "Telugu", "Kannada", "Malayalam"],
         )
-        self.language_combo.pack(pady=5)
+        self.language_combo.pack(pady=5, padx=10, fill="x")
 
-        tk.Label(self.win, text="Username").pack(pady=5)
-        self.username_entry = tk.Entry(self.win)
-        self.username_entry.pack(pady=5)
+        tk.Label(inner, text="Username").pack(pady=5, anchor="w", padx=10)
+        self.username_entry = tk.Entry(inner)
+        self.username_entry.pack(pady=5, padx=10, fill="x")
 
-        tk.Label(self.win, text="Password").pack(pady=5)
-        self.password_entry = tk.Entry(self.win, show="*")
-        self.password_entry.pack(pady=5)
+        tk.Label(inner, text="Password").pack(pady=5, anchor="w", padx=10)
+        self.password_entry = tk.Entry(inner, show="*")
+        self.password_entry.pack(pady=5, padx=10, fill="x")
 
-        tk.Label(self.win, text="Confirm Password").pack(pady=5)
-        self.confirm_password_entry = tk.Entry(self.win, show="*")
-        self.confirm_password_entry.pack(pady=5)
+        tk.Label(inner, text="Confirm Password").pack(pady=5, anchor="w", padx=10)
+        self.confirm_password_entry = tk.Entry(inner, show="*")
+        self.confirm_password_entry.pack(pady=5, padx=10, fill="x")
 
-        tk.Button(self.win, text="Register", command=self.register).pack(pady=15)
+        
+        bottom_frame = tk.Frame(self.win)
+        bottom_frame.pack(side="bottom", fill="x")
+        self.register_btn = tk.Button(
+            bottom_frame,
+            text="Register",
+            command=self.register,
+            bg="#2E8B57",
+            fg="white",
+            font=("Arial", 11, "bold"),
+        )
+        self.register_btn.pack(pady=10)
 
     def search_location_suggestions(self):
         query = self.location_entry.get().strip()
@@ -1162,6 +1220,7 @@ class SignupWindow:
         value = self.suggestion_listbox.get(index)
         self.location_entry.delete(0, tk.END)
         self.location_entry.insert(0, value)
+        self.suggestion_listbox.delete(0, tk.END)
 
     def register(self):
         name = self.fields["full_name"].get().strip()
@@ -1172,6 +1231,12 @@ class SignupWindow:
         password = self.password_entry.get().strip()
         confirm_password = self.confirm_password_entry.get().strip()
         language = self.language_var.get().strip()
+
+        try:
+            logging.info("Register attempt: name=%s contact=%s email=%s location=%s username=%s language=%s pass_len=%d",
+                         name, contact, email, location, username, language, len(password))
+        except Exception:
+            pass
 
         if not all([name, contact, email, location, username, password]):
             messagebox.showerror("Error", "All fields are required")
@@ -1186,29 +1251,57 @@ class SignupWindow:
         conn = get_db_connection()
         if not conn:
             return
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM farmers WHERE username=%s", (username,))
-        if cursor.fetchone():
-            messagebox.showerror("Error", "Username already exists")
-            cursor.close()
-            conn.close()
-            return
 
-        lat, lon = get_coordinates(location)
-        hashed = hashlib.sha256(password.encode()).hexdigest()
-        cursor.execute(
-            """
-            INSERT INTO farmers (name, contact, email, location, latitude, longitude, username, password, language)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (name, contact, email, location, lat, lon, username, hashed, language),
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
-        messagebox.showinfo("Success", "Registration successful")
-        self.win.destroy()
+        cursor = None
+        success = False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM farmers WHERE username=%s", (username,))
+            if cursor.fetchone():
+                logging.info("Username already exists: %s", username)
+                messagebox.showerror("Error", "Username already exists")
+                return
 
+            lat, lon = get_coordinates(location)
+            hashed = hashlib.sha256(password.encode()).hexdigest()
+            cursor.execute(
+                """
+                INSERT INTO farmers (name, contact, email, location, latitude, longitude, username, password, language)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (name, contact, email, location, lat, lon, username, hashed, language),
+            )
+            conn.commit()
+            success = True
+            logging.info("Registration successful for username=%s", username)
+        except mysql.connector.IntegrityError as ie:
+            logging.exception("IntegrityError during registration for username=%s", username)
+            try:
+                print(f"Database Integrity Error: {ie}", file=sys.stderr)
+            except Exception:
+                pass
+            messagebox.showerror("Database Error", f"Integrity error: {ie}")
+        except Exception as e:
+            logging.exception("Failed to register user %s", username)
+            try:
+                print(f"Failed to register: {e}", file=sys.stderr)
+            except Exception:
+                pass
+            messagebox.showerror("Database Error", f"Failed to register: {e}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        if success:
+            messagebox.showinfo("Success", "Registration successful")
+            self.win.destroy()
 
 class ForgotPasswordWindow:
     def __init__(self, parent):
@@ -1306,7 +1399,6 @@ class ForgotPasswordWindow:
         messagebox.showinfo("Success", "Password reset successful")
         self.win.destroy()
 
-
 class AdminDashboard:
     def __init__(self, root, login_system):
         self.root = root
@@ -1353,7 +1445,6 @@ class AdminDashboard:
     def logout(self):
         self.root.destroy()
         self.login_system.root.deiconify()
-
 
 class LoginSystem:
     def __init__(self, root):
@@ -1479,7 +1570,7 @@ class LoginSystem:
             messagebox.showerror("Error", "Invalid farmer credentials")
 
     def signup(self):
-        SignupWindow(self.root, self)
+        return SignupWindow(self.root, self)
 
     def open_forgot_password(self):
         ForgotPasswordWindow(self.root)
@@ -1493,7 +1584,6 @@ class LoginSystem:
         self.root.withdraw()
         win = tk.Toplevel()
         FarmerDashboard(win, self, username)
-
 
 if __name__ == "__main__":
     root = tk.Tk()
