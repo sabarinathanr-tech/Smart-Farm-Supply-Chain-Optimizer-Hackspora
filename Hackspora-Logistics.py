@@ -232,10 +232,8 @@ def get_db_connection():
         create_all_tables(conn)
         return conn
     except mysql.connector.Error as err:
-        # Log the error to console for easier debugging and also show a messagebox in the UI
         logging.exception("Error connecting to MySQL")
         try:
-            # If tkinter is not initialized or running headless, printing to stderr helps capture the issue
             print(f"Database Error: {err}", file=sys.stderr)
         except Exception:
             pass
@@ -665,7 +663,6 @@ class FarmSupplyApp:
                 except Exception:
                     pass
             else:
-                # No products available
                 self.order_product["values"] = ["No products available"]
                 try:
                     self.place_order_btn.state(["disabled"])
@@ -1589,3 +1586,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     LoginSystem(root)
     root.mainloop()
+
